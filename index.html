@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clinical Trial Jeopardy</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+</head>
+<body class="bg-black text-white">
+    <div id="app"></div>
+
+    <script>
+        // Game state
+        let gameState = 'menu';
+        let selectedQuestion = null;
+        let score = 0;
+        let playerName = '';
+        let answeredQuestions = new Set();
+        let showAnswer = false;
+        let selectedAnswer = null;
+        let leaderboard = [];
+        let timeLeft = 30;
+        let timerActive = false;
+        let timerInterval = null;
+
+        const categories = {
+            "Patient Recruitment": [
+                { 
+                    points: 100, 
+                    clue: "This common issue occurs when sites struggle to find enough qualified participants, often taking 2-3x longer than planned.", 
+                    options: ["Slow enrollment", "Rapid recruitment", "Quick screening", "Fast consent"],
+                    correct: 0
+                },
+                { 
+                    points: 200, 
+                    clue: "When participants don't meet inclusion criteria but are enrolled anyway, creating this type of costly mistake.", 
+                    options: ["Data queries", "Protocol deviations", "Site visits", "Adverse events"],
+                    correct: 1
+                },
+                { 
+                    points: 300, 
+                    clue: "The average percentage of clinical trials that fail to meet their enrollment timeline on schedule.", 
+                    options: ["50%", "65%", "80%", "95%"],
+                    correct: 2
+                }
+            ],
+            "Site Management": [
+                { 
+                    points: 100, 
+                    clue: "The average percentage of time research coordinators spend on administrative tasks versus direct patient care.", 
+                    options: ["25%", "40%", "60%", "75%"],
+                    correct: 2
+                },
+                { 
+                    points: 200, 
+                    clue: "The number of different systems a typical research site uses to manage a single trial.", 
+                    options: ["2-3 systems", "4-5 systems", "8-12 systems", "15-20 systems"],
+                    correct: 2
+                },
+                { 
+                    points: 300, 
+                    clue: "The average annual turnover rate for clinical research coordinators in the industry.", 
+                    options: ["15%", "25%", "35%", "45%"],
+                    correct: 2
+                }
+            ],
+            "Data Quality": [
+                { 
+                    points: 100, 
+                    clue: "The percentage of clinical trial data that typically requires some form of correction or clarification.", 
+                    options: ["5-10%", "15-25%", "30-40%", "50-60%"],
+                    correct: 1
+                },
+                { 
+                    points: 200, 
+                    clue: "The average time it takes to clean and resolve data queries in traditional trials.", 
+                    options: ["1-2 days", "1-2 weeks", "4-6 weeks", "3-4 months"],
+                    correct: 2
+                },
+                { 
+                    points: 300, 
+                    clue: "The average cost per data query that needs to be resolved during a clinical trial.", 
+                    options: ["$50-100", "$200-500", "$600-1,200", "$1,500-2,000"],
+                    correct: 2
+                }
+            ],
+            "Regulatory Hurdles": [
+                { 
+                    points: 100, 
+                    clue: "This required document takes an average of 6-8 months to prepare and get approved by ethics committees.", 
+                    options: ["The protocol", "Site contracts", "Budget proposals", "Staff CVs"],
+                    correct: 0
+                },
+                { 
+                    points: 200, 
+                    clue: "The percentage of regulatory submissions that contain errors requiring resubmission.", 
+                    options: ["10-20%", "25-35%", "40-50%", "60-70%"],
+                    correct: 2
+                },
+                { 
+                    points: 300, 
+                    clue: "The average number of protocol amendments made during a typical Phase III clinical trial.", 
+                    options: ["1-2", "3-5", "6-8", "10-12"],
+                    correct: 1
+                }
+            ]
+        };
+
+        // Load leaderboard
+        function loadLeaderboard() {
+            const saved = localStorage.getItem('ctj-leaderboard');
+            if (saved) {
+                leaderboard = JSON.parse(saved);
+                // Clean old data
+                leaderboard = leaderboard.filter(entry => entry.score >= -900 && entry.score <= 900);
+                localStorage.setItem('ctj-leaderboard', JSON.stringify(leaderboard));
+            }
+        }
+
+        // Timer functions
+        function startTimer() {
+            timerActive = true;
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                render();
+                if (timeLeft <= 0) {
+                    timerActive = false;
+                    clearInterval(timerInterval);
+                    selectedAnswer = -1;
+                    showAnswer = true;
+                    score -= selectedQuestion.question.points;
+                    answeredQuestions.add(`${selectedQuestion.category}-${selectedQuestion.questionIndex}`);
+                    render();
+                }
+            }, 1000);
+        }
+
+        function stopTimer() {
+            timerActive = false;
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+        }
+
+        // Game functions
+        function startGame() {
+            const nameInput = document.getElementById('playerName');
+            if (!nameInput.value.trim()) {
+                alert('Please enter your name to start!');
+                return;
+            }
+            playerName = nameInput.value.trim();
+            gameState = 'playing';
+            score = 0;
+            answeredQuestions = new Set();
+            render();
+        }
+
+        function selectQuestion(category, questionIndex) {
+            const questionKey = `${category}-${questionIndex}`;
+            if (answeredQuestions.has(questionKey)) return;
+            
+            selectedQuestion = {
+                category,
+                questionIndex,
+                question: categories[category][questionIndex]
+            };
+            gameState = 'question';
+            showAnswer = false;
+            selectedAnswer = null;
+            timeLeft = 30;
+            startTimer();
+            render();
+        }
+
+        function answerQuestion(answerIndex) {
+            stopTimer();
+            selectedAnswer = answerIndex;
+            showAnswer = true;
+            
+            const isCorrect = answerIndex === selectedQuestion.question.correct;
+            if (isCorrect) {
+                score += selectedQuestion.question.points;
+            } else {
+                score -= selectedQuestion.question.points;
+            }
+            
+            const questionKey = `${selectedQuestion.category}-${selectedQuestion.questionIndex}`;
+            answeredQuestions.add(questionKey);
+            render();
+        }
+
+        function continueGame() {
+            const totalQuestions = Object.values(categories).reduce((sum, cat) => sum + cat.length, 0);
+            if (answeredQuestions.size >= totalQuestions) {
+                finishGame();
+            } else {
+                gameState = 'playing';
+                selectedQuestion = null;
+                render();
+            }
+        }
+
+        function finishGame() {
+            const newEntry = { name: playerName, score, date: new Date().toLocaleDateString() };
+            leaderboard.push(newEntry);
+            leaderboard.sort((a, b) => b.score - a.score);
+            leaderboard = leaderboard.slice(0, 10);
+            localStorage.setItem('ctj-leaderboard', JSON.stringify(leaderboard));
+            gameState = 'finished';
+            render();
+        }
+
+        function resetGame() {
+            gameState = 'menu';
+            selectedQuestion = null;
+            score = 0;
+            answeredQuestions = new Set();
+            showAnswer = false;
+            selectedAnswer = null;
+            playerName = '';
+            render();
+        }
+
+        function shareScore() {
+            const currentUrl = window.location.href;
+            const text = `I just scored ${score} points in Clinical Trial Jeopardy! Think you can beat me? 🧬💜 Play here: ${currentUrl}`;
+            
+            if (navigator.share) {
+                navigator.share({
+                    title: 'Clinical Trial Jeopardy',
+                    text: text
+                }).catch(() => copyToClipboard(text));
+            } else {
+                copyToClipboard(text);
+            }
+        }
+
+        function copyToClipboard(text) {
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('Score and link copied to clipboard!');
+                }).catch(() => fallbackCopy(text));
+            } else {
+                fallbackCopy(text);
+            }
+        }
+
+        function fallbackCopy(text) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            alert('Score and link copied to clipboard!');
+        }
+
+        // Render functions
+        function renderMenu() {
+            return `
+                <div class="min-h-screen bg-black text-white p-6 flex flex-col items-center justify-center">
+                    <div class="max-w-4xl w-full text-center">
+                        <h1 class="text-6xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-purple-600 bg-clip-text text-transparent">
+                            Clinical Trial Jeopardy
+                        </h1>
+                        <p class="text-xl mb-8 text-gray-300">
+                            Test your knowledge of clinical trial challenges and solutions!
+                        </p>
+                        
+                        <div class="bg-gray-900 border border-purple-500 rounded-lg p-8 mb-8">
+                            <h2 class="text-2xl font-bold mb-4 text-purple-400">Enter Your Name</h2>
+                            <input
+                                type="text"
+                                id="playerName"
+                                placeholder="Your name here..."
+                                class="w-full max-w-md p-3 bg-gray-800 border border-purple-400 rounded text-white text-center text-lg"
+                                onkeypress="if(event.key==='Enter') startGame()"
+                            />
+                            <button
+                                onclick="startGame()"
+                                class="mt-4 bg-purple-600 hover:bg-purple-700 px-8 py-3 rounded-lg text-white font-bold text-lg transition-colors"
+                            >
+                                Start Game
+                            </button>
+                        </div>
+
+                        ${leaderboard.length > 0 ? `
+                            <div class="bg-gray-900 border border-purple-500 rounded-lg p-6">
+                                <h3 class="text-2xl font-bold mb-4 text-purple-400 flex items-center justify-center gap-2">
+                                    🏆 Leaderboard
+                                </h3>
+                                <div class="space-y-2">
+                                    ${leaderboard.slice(0, 5).map((entry, index) => `
+                                        <div class="flex justify-between items-center text-lg">
+                                            <span class="text-white">${index + 1}. ${entry.name}</span>
+                                            <span class="text-purple-400 font-bold">${entry.score}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderQuestion() {
+            return `
+                <div class="min-h-screen bg-black text-white p-6 flex flex-col items-center justify-center">
+                    <div class="max-w-4xl w-full">
+                        <div class="flex justify-between items-center mb-6">
+                            <h2 class="text-2xl font-bold text-purple-400">${selectedQuestion.category}</h2>
+                            <div class="text-xl">Score: <span class="text-purple-400 font-bold">${score}</span></div>
+                        </div>
+                        
+                        <div class="bg-purple-600 text-center py-4 rounded-lg mb-6">
+                            <div class="text-3xl font-bold">$${selectedQuestion.question.points}</div>
+                        </div>
+
+                        <div class="bg-gray-900 border border-purple-500 rounded-lg p-8 mb-6">
+                            <p class="text-xl text-center leading-relaxed">
+                                ${selectedQuestion.question.clue}
+                            </p>
+                        </div>
+
+                        ${!showAnswer ? `
+                            <div class="text-center mb-6">
+                                <div class="text-lg mb-4">Time remaining: <span class="text-purple-400 font-bold">${timeLeft}s</span></div>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    ${selectedQuestion.question.options.map((option, index) => `
+                                        <button
+                                            onclick="answerQuestion(${index})"
+                                            class="bg-gray-800 hover:bg-purple-700 border border-purple-500 px-6 py-4 rounded-lg text-white font-semibold text-lg transition-colors"
+                                        >
+                                            ${String.fromCharCode(65 + index)}. ${option}
+                                        </button>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : `
+                            <div class="text-center">
+                                <div class="bg-gray-900 border border-purple-500 rounded-lg p-6 mb-6">
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        ${selectedQuestion.question.options.map((option, index) => {
+                                            const isCorrect = index === selectedQuestion.question.correct;
+                                            const isSelected = index === selectedAnswer;
+                                            
+                                            let bgColor = 'bg-gray-800';
+                                            let border = 'border-gray-600';
+                                            
+                                            if (isCorrect) {
+                                                bgColor = 'bg-green-600';
+                                                border = 'border-green-400';
+                                            } else if (isSelected && !isCorrect) {
+                                                bgColor = 'bg-red-600';
+                                                border = 'border-red-400';
+                                            }
+                                            
+                                            return `
+                                                <div class="${bgColor} text-white border ${border} px-4 py-3 rounded-lg font-semibold">
+                                                    ${String.fromCharCode(65 + index)}. ${option}
+                                                    ${isCorrect ? '<span class="ml-2">✓</span>' : ''}
+                                                    ${isSelected && !isCorrect ? '<span class="ml-2">✗</span>' : ''}
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                    
+                                    <div class="text-lg">
+                                        ${selectedAnswer === selectedQuestion.question.correct ? 
+                                            `<div class="text-green-400 font-bold">Correct! +${selectedQuestion.question.points} points</div>` :
+                                            selectedAnswer === -1 ? 
+                                            `<div class="text-red-400 font-bold">Time's up! -${selectedQuestion.question.points} points</div>` :
+                                            `<div class="text-red-400 font-bold">Incorrect! -${selectedQuestion.question.points} points</div>`
+                                        }
+                                    </div>
+                                </div>
+                                <button
+                                    onclick="continueGame()"
+                                    class="bg-purple-600 hover:bg-purple-700 px-8 py-3 rounded-lg text-white font-bold text-lg"
+                                >
+                                    Continue
+                                </button>
+                            </div>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderPlaying() {
+            const totalQuestions = Object.values(categories).reduce((sum, cat) => sum + cat.length, 0);
+            
+            return `
+                <div class="min-h-screen bg-black text-white p-6">
+                    <div class="max-w-6xl mx-auto">
+                        <div class="flex justify-between items-center mb-8">
+                            <h1 class="text-4xl font-bold bg-gradient-to-r from-purple-400 to-purple-600 bg-clip-text text-transparent">
+                                Clinical Trial Jeopardy
+                            </h1>
+                            <div class="text-xl">
+                                Player: <span class="text-purple-400 font-bold">${playerName}</span> | 
+                                Score: <span class="text-purple-400 font-bold">${score}</span>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-4 gap-4">
+                            ${Object.entries(categories).map(([category, questions]) => `
+                                <div class="space-y-2">
+                                    <div class="bg-purple-600 text-center py-3 rounded-lg font-bold text-lg">
+                                        ${category}
+                                    </div>
+                                    ${questions.map((question, index) => {
+                                        const questionKey = `${category}-${index}`;
+                                        const isAnswered = answeredQuestions.has(questionKey);
+                                        
+                                        return `
+                                            <button
+                                                onclick="selectQuestion('${category}', ${index})"
+                                                ${isAnswered ? 'disabled' : ''}
+                                                class="w-full py-6 rounded-lg text-2xl font-bold transition-colors ${
+                                                    isAnswered 
+                                                        ? 'bg-gray-700 text-gray-500 cursor-not-allowed' 
+                                                        : 'bg-gray-900 hover:bg-purple-700 text-white border border-purple-500'
+                                                }"
+                                            >
+                                                $${question.points}
+                                            </button>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <div class="mt-8 text-center">
+                            <p class="text-gray-400">
+                                Questions answered: ${answeredQuestions.size} / ${totalQuestions}
+                            </p>
+                            ${answeredQuestions.size >= totalQuestions ? `
+                                <button
+                                    onclick="finishGame()"
+                                    class="mt-4 bg-purple-600 hover:bg-purple-700 px-8 py-3 rounded-lg text-white font-bold text-lg"
+                                >
+                                    Finish Game
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderFinished() {
+            const rank = leaderboard.findIndex(entry => entry.name === playerName && entry.score === score) + 1;
+            
+            return `
+                <div class="min-h-screen bg-black text-white p-6 flex flex-col items-center justify-center">
+                    <div class="max-w-4xl w-full text-center">
+                        <h1 class="text-5xl font-bold mb-4 text-purple-400">Game Complete!</h1>
+                        <div class="text-6xl font-bold mb-6 text-white">${score} Points</div>
+                        
+                        ${rank <= 5 ? `
+                            <div class="text-2xl mb-6 text-purple-400">
+                                🎉 You're #${rank} on the leaderboard! 🎉
+                            </div>
+                        ` : ''}
+                        
+                        <div class="space-x-4 mb-8">
+                            <button
+                                onclick="shareScore()"
+                                class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg text-white font-bold inline-flex items-center gap-2"
+                            >
+                                📤 Share Score
+                            </button>
+                            <button
+                                onclick="resetGame()"
+                                class="bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-lg text-white font-bold inline-flex items-center gap-2"
+                            >
+                                🔄 Play Again
+                            </button>
+                        </div>
+
+                        <div class="bg-gray-900 border border-purple-500 rounded-lg p-6">
+                            <h3 class="text-2xl font-bold mb-4 text-purple-400 flex items-center justify-center gap-2">
+                                🏆 Final Leaderboard
+                            </h3>
+                            <div class="space-y-2">
+                                ${leaderboard.slice(0, 10).map((entry, index) => `
+                                    <div class="flex justify-between items-center text-lg p-2 rounded ${
+                                        entry.name === playerName && entry.score === score ? 'bg-purple-600' : ''
+                                    }">
+                                        <span class="text-white">${index + 1}. ${entry.name}</span>
+                                        <span class="text-purple-400 font-bold">${entry.score}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function render() {
+            const app = document.getElementById('app');
+            
+            switch(gameState) {
+                case 'menu':
+                    app.innerHTML = renderMenu();
+                    break;
+                case 'playing':
+                    app.innerHTML = renderPlaying();
+                    break;
+                case 'question':
+                    app.innerHTML = renderQuestion();
+                    break;
+                case 'finished':
+                    app.innerHTML = renderFinished();
+                    break;
+            }
+        }
+
+        // Initialize
+        loadLeaderboard();
+        render();
+    </script>
+</body>
+</html>
