@@ -12,7 +12,7 @@
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
         import { getFirestore, collection, addDoc, getDocs, orderBy, query, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
-        // Firebase configuration (using a demo project - you can create your own)
+        // Firebase configuration (using a demo project)
         const firebaseConfig = {
             apiKey: "AIzaSyBqPzjl-XYvJF5w8rKzD9cN9Q2E3gH7I8s",
             authDomain: "clinical-trial-jeopardy.firebaseapp.com",
@@ -86,6 +86,28 @@
             opacity: 0.6;
             pointer-events: none;
         }
+
+        /* Fix mobile button highlighting */
+        button {
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
+            -webkit-user-select: none !important;
+            -khtml-user-select: none !important;
+            -moz-user-select: none !important;
+            -ms-user-select: none !important;
+            user-select: none !important;
+            outline: none !important;
+        }
+
+        button:focus {
+            outline: none !important;
+            box-shadow: none !important;
+        }
+
+        button:active {
+            outline: none !important;
+            box-shadow: none !important;
+        }
     </style>
 </head>
 <body class="bg-black text-white">
@@ -105,6 +127,7 @@
         let timerActive = false;
         let timerInterval = null;
         let isLoading = false;
+        let isSavingScore = false;
 
         const categories = {
             "Patient Recruitment": [
@@ -213,19 +236,30 @@
         // Save score to Firebase
         async function saveScore(name, score) {
             if (typeof window.saveScoreToFirebase === 'function') {
-                const success = await window.saveScoreToFirebase(name, score);
-                if (success) {
-                    // Reload leaderboard after saving
-                    await loadLeaderboard();
-                } else {
-                    // Fallback to localStorage
-                    const newEntry = { name, score, date: new Date().toLocaleDateString() };
-                    leaderboard.push(newEntry);
-                    leaderboard.sort((a, b) => b.score - a.score);
-                    leaderboard = leaderboard.slice(0, 10);
-                    localStorage.setItem('ctj-leaderboard', JSON.stringify(leaderboard));
+                try {
+                    const success = await window.saveScoreToFirebase(name, score);
+                    if (success) {
+                        // Reload leaderboard after saving
+                        await loadLeaderboard();
+                    } else {
+                        // Fallback to localStorage
+                        fallbackSaveScore(name, score);
+                    }
+                } catch (error) {
+                    console.error('Error saving to Firebase:', error);
+                    fallbackSaveScore(name, score);
                 }
+            } else {
+                fallbackSaveScore(name, score);
             }
+        }
+
+        function fallbackSaveScore(name, score) {
+            const newEntry = { name, score, date: new Date().toLocaleDateString() };
+            leaderboard.push(newEntry);
+            leaderboard.sort((a, b) => b.score - a.score);
+            leaderboard = leaderboard.slice(0, 10);
+            localStorage.setItem('ctj-leaderboard', JSON.stringify(leaderboard));
         }
 
         // Timer functions
@@ -301,10 +335,13 @@
             render();
         }
 
-        function continueGame() {
+        async function continueGame() {
             const totalQuestions = Object.values(categories).reduce((sum, cat) => sum + cat.length, 0);
+            console.log('Continue game - answered:', answeredQuestions.size, 'total:', totalQuestions);
+            
             if (answeredQuestions.size >= totalQuestions) {
-                finishGame();
+                console.log('Game should finish - calling finishGame');
+                await finishGame();
             } else {
                 gameState = 'playing';
                 selectedQuestion = null;
@@ -313,10 +350,21 @@
         }
 
         async function finishGame() {
-            // Save score to Firebase
-            await saveScore(playerName, score);
-            gameState = 'finished';
-            render();
+            console.log('finishGame called');
+            isSavingScore = true;
+            gameState = 'finished'; // Change state immediately
+            render(); // Show finished screen immediately
+            
+            // Save score in background
+            try {
+                await saveScore(playerName, score);
+                console.log('Score saved successfully');
+            } catch (error) {
+                console.error('Failed to save score:', error);
+            }
+            
+            isSavingScore = false;
+            render(); // Re-render with updated leaderboard
         }
 
         function resetGame() {
@@ -583,7 +631,11 @@
                         <h1 class="text-4xl md:text-5xl font-bold mb-4 text-purple-400">Game Complete!</h1>
                         <div class="text-5xl md:text-6xl font-bold mb-6 text-white">${score} Points</div>
                         
-                        ${rank > 0 && rank <= 5 ? `
+                        ${isSavingScore ? `
+                            <div class="text-lg mb-6 text-yellow-400">
+                                Saving your score to the global leaderboard...
+                            </div>
+                        ` : rank > 0 && rank <= 5 ? `
                             <div class="text-xl md:text-2xl mb-6 text-purple-400">
                                 🎉 You're #${rank} on the global leaderboard! 🎉
                             </div>
