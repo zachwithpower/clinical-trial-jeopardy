@@ -6,6 +6,63 @@
     <title>Clinical Trial Jeopardy</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    
+    <!-- Firebase -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getFirestore, collection, addDoc, getDocs, orderBy, query, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+        // Firebase configuration (using a demo project - you can create your own)
+        const firebaseConfig = {
+            apiKey: "AIzaSyBqPzjl-XYvJF5w8rKzD9cN9Q2E3gH7I8s",
+            authDomain: "clinical-trial-jeopardy.firebaseapp.com",
+            projectId: "clinical-trial-jeopardy-demo",
+            storageBucket: "clinical-trial-jeopardy-demo.appspot.com",
+            messagingSenderId: "123456789012",
+            appId: "1:123456789012:web:abcdef1234567890"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // Make Firebase functions available globally
+        window.saveScoreToFirebase = async function(name, score) {
+            try {
+                await addDoc(collection(db, 'leaderboard'), {
+                    name: name,
+                    score: score,
+                    date: new Date().toISOString(),
+                    timestamp: Date.now()
+                });
+                console.log('Score saved to Firebase');
+                return true;
+            } catch (error) {
+                console.error('Error saving score:', error);
+                return false;
+            }
+        };
+
+        window.loadLeaderboardFromFirebase = async function() {
+            try {
+                const q = query(
+                    collection(db, 'leaderboard'), 
+                    orderBy('score', 'desc'), 
+                    limit(10)
+                );
+                const querySnapshot = await getDocs(q);
+                const scores = [];
+                querySnapshot.forEach((doc) => {
+                    scores.push(doc.data());
+                });
+                return scores;
+            } catch (error) {
+                console.error('Error loading leaderboard:', error);
+                return [];
+            }
+        };
+    </script>
+
     <style>
         /* Power logo styling */
         .power-logo {
@@ -23,6 +80,11 @@
             .mobile-py-3 { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
             .mobile-px-3 { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
             .mobile-gap-2 { gap: 0.5rem !important; }
+        }
+
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
         }
     </style>
 </head>
@@ -42,6 +104,7 @@
         let timeLeft = 30;
         let timerActive = false;
         let timerInterval = null;
+        let isLoading = false;
 
         const categories = {
             "Patient Recruitment": [
@@ -126,14 +189,42 @@
             ]
         };
 
-        // Load leaderboard
-        function loadLeaderboard() {
-            const saved = localStorage.getItem('ctj-leaderboard');
-            if (saved) {
-                leaderboard = JSON.parse(saved);
-                // Clean old data
-                leaderboard = leaderboard.filter(entry => entry.score >= -900 && entry.score <= 900);
-                localStorage.setItem('ctj-leaderboard', JSON.stringify(leaderboard));
+        // Load leaderboard from Firebase
+        async function loadLeaderboard() {
+            if (typeof window.loadLeaderboardFromFirebase === 'function') {
+                isLoading = true;
+                render();
+                try {
+                    leaderboard = await window.loadLeaderboardFromFirebase();
+                    console.log('Loaded leaderboard:', leaderboard);
+                } catch (error) {
+                    console.error('Failed to load leaderboard:', error);
+                    // Fallback to localStorage
+                    const saved = localStorage.getItem('ctj-leaderboard');
+                    if (saved) {
+                        leaderboard = JSON.parse(saved).filter(entry => entry.score >= -900 && entry.score <= 900);
+                    }
+                }
+                isLoading = false;
+                render();
+            }
+        }
+
+        // Save score to Firebase
+        async function saveScore(name, score) {
+            if (typeof window.saveScoreToFirebase === 'function') {
+                const success = await window.saveScoreToFirebase(name, score);
+                if (success) {
+                    // Reload leaderboard after saving
+                    await loadLeaderboard();
+                } else {
+                    // Fallback to localStorage
+                    const newEntry = { name, score, date: new Date().toLocaleDateString() };
+                    leaderboard.push(newEntry);
+                    leaderboard.sort((a, b) => b.score - a.score);
+                    leaderboard = leaderboard.slice(0, 10);
+                    localStorage.setItem('ctj-leaderboard', JSON.stringify(leaderboard));
+                }
             }
         }
 
@@ -221,12 +312,9 @@
             }
         }
 
-        function finishGame() {
-            const newEntry = { name: playerName, score, date: new Date().toLocaleDateString() };
-            leaderboard.push(newEntry);
-            leaderboard.sort((a, b) => b.score - a.score);
-            leaderboard = leaderboard.slice(0, 10);
-            localStorage.setItem('ctj-leaderboard', JSON.stringify(leaderboard));
+        async function finishGame() {
+            // Save score to Firebase
+            await saveScore(playerName, score);
             gameState = 'finished';
             render();
         }
@@ -315,9 +403,9 @@
                         </div>
 
                         ${leaderboard.length > 0 ? `
-                            <div class="bg-gray-900 border border-purple-500 rounded-lg p-6">
+                            <div class="bg-gray-900 border border-purple-500 rounded-lg p-6 ${isLoading ? 'loading' : ''}">
                                 <h3 class="text-xl md:text-2xl font-bold mb-4 text-purple-400 flex items-center justify-center gap-2">
-                                    🏆 Leaderboard
+                                    🏆 Global Leaderboard ${isLoading ? '(Loading...)' : ''}
                                 </h3>
                                 <div class="space-y-2">
                                     ${leaderboard.slice(0, 5).map((entry, index) => `
@@ -327,6 +415,12 @@
                                         </div>
                                     `).join('')}
                                 </div>
+                            </div>
+                        ` : isLoading ? `
+                            <div class="bg-gray-900 border border-purple-500 rounded-lg p-6">
+                                <h3 class="text-xl md:text-2xl font-bold mb-4 text-purple-400">
+                                    🏆 Loading Global Leaderboard...
+                                </h3>
                             </div>
                         ` : ''}
                     </div>
@@ -489,9 +583,13 @@
                         <h1 class="text-4xl md:text-5xl font-bold mb-4 text-purple-400">Game Complete!</h1>
                         <div class="text-5xl md:text-6xl font-bold mb-6 text-white">${score} Points</div>
                         
-                        ${rank <= 5 ? `
+                        ${rank > 0 && rank <= 5 ? `
                             <div class="text-xl md:text-2xl mb-6 text-purple-400">
-                                🎉 You're #${rank} on the leaderboard! 🎉
+                                🎉 You're #${rank} on the global leaderboard! 🎉
+                            </div>
+                        ` : rank > 0 ? `
+                            <div class="text-lg md:text-xl mb-6 text-gray-300">
+                                You ranked #${rank} globally! Keep playing to improve your score.
                             </div>
                         ` : ''}
                         
@@ -512,7 +610,7 @@
 
                         <div class="bg-gray-900 border border-purple-500 rounded-lg p-4 md:p-6">
                             <h3 class="text-xl md:text-2xl font-bold mb-4 text-purple-400 flex items-center justify-center gap-2">
-                                🏆 Final Leaderboard
+                                🏆 Global Leaderboard
                             </h3>
                             <div class="space-y-2">
                                 ${leaderboard.slice(0, 10).map((entry, index) => `
@@ -550,7 +648,9 @@
         }
 
         // Initialize
-        loadLeaderboard();
+        setTimeout(() => {
+            loadLeaderboard();
+        }, 1000); // Wait for Firebase to load
         render();
     </script>
 </body>
