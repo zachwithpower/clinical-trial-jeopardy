@@ -6,6 +6,7 @@
     <title>Clinical Trial Jeopardy</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <style>
         /* Power logo styling */
@@ -73,9 +74,10 @@
         let isLoading = false;
         let isSavingScore = false;
 
-        // Shared leaderboard using a simple proxy to avoid CORS
-        const PROXY_URL = 'https://api.allorigins.win/raw?url=';
-        const LEADERBOARD_URL = 'https://clinical-trial-jeopardy-leaderboard.netlify.app/.netlify/functions/leaderboard';
+        // Supabase configuration - Public database for leaderboard
+        const supabaseUrl = 'https://xvwzpqkjyoqkrjqfauws.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh2d3pwcWtqeW9xa3JqcWZhdXdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzQ2MTY4MDAsImV4cCI6MjA1MDE5MjgwMH0.rnxW2WLIbXdwx2fJdPgGGP8X4eJqK6nP3mLzV5sGHcM';
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
 
         const categories = {
             "Patient Recruitment": [
@@ -160,52 +162,35 @@
             ]
         };
 
-        // Simple shared leaderboard using GitHub Gist as backend
-        const GIST_ID = 'f8a7b6c4d3e2f1a9b8c7d6e5f4a3b2c1';
-        const GITHUB_TOKEN = ''; // We'll use anonymous requests
-
-        // Alternative: Use a simple HTTP service
+        // Load leaderboard from Supabase
         async function loadLeaderboard() {
             isLoading = true;
             render();
             
             try {
-                // Try to load from our simple backend
-                const response = await fetch('https://httpbin.org/json');
+                const { data, error } = await supabase
+                    .from('leaderboard')
+                    .select('*')
+                    .order('score', { ascending: false })
+                    .limit(20);
                 
-                // Since we can't easily set up a real backend quickly, let's use a more reliable approach
-                // We'll implement a hybrid system that works immediately
-                
-                // Load from localStorage but with a shared key approach
-                const localData = localStorage.getItem('ctj-global-leaderboard-shared');
-                const cloudData = localStorage.getItem('ctj-cloud-sync-' + new Date().toDateString());
-                
-                if (localData) {
-                    leaderboard = JSON.parse(localData);
-                } else {
-                    leaderboard = [];
+                if (error) {
+                    console.error('Supabase error:', error);
+                    throw error;
                 }
                 
-                // Clean and sort leaderboard
-                leaderboard = leaderboard.filter(entry => 
-                    entry.name && 
-                    typeof entry.score === 'number' && 
-                    entry.score >= -900 && 
-                    entry.score <= 900
-                );
-                leaderboard.sort((a, b) => b.score - a.score);
-                leaderboard = leaderboard.slice(0, 20);
-                
-                console.log('Loaded leaderboard:', leaderboard);
+                leaderboard = data || [];
+                console.log('Loaded leaderboard from Supabase:', leaderboard);
                 
             } catch (error) {
                 console.error('Error loading leaderboard:', error);
                 // Fallback to localStorage
-                const saved = localStorage.getItem('ctj-global-leaderboard-shared');
+                const saved = localStorage.getItem('ctj-leaderboard-backup');
                 if (saved) {
                     leaderboard = JSON.parse(saved).filter(entry => 
                         entry.score >= -900 && entry.score <= 900
                     );
+                    leaderboard.sort((a, b) => b.score - a.score);
                 } else {
                     leaderboard = [];
                 }
@@ -215,68 +200,52 @@
             render();
         }
 
-        // Enhanced save with better sharing
+        // Save score to Supabase
         async function saveScore(name, score) {
             isSavingScore = true;
             render();
             
             try {
                 const newEntry = { 
-                    name: name.trim(), 
+                    player_name: name.trim(), 
                     score: score, 
-                    date: new Date().toLocaleDateString(),
-                    timestamp: Date.now(),
-                    device: 'device-' + Math.random().toString(36).substr(2, 9)
+                    created_at: new Date().toISOString()
                 };
                 
-                // Add to current leaderboard
+                const { data, error } = await supabase
+                    .from('leaderboard')
+                    .insert([newEntry])
+                    .select();
+                
+                if (error) {
+                    console.error('Supabase insert error:', error);
+                    throw error;
+                }
+                
+                console.log('Score saved to Supabase:', data);
+                
+                // Reload leaderboard to get updated rankings
+                await loadLeaderboard();
+                
+            } catch (error) {
+                console.error('Error saving score:', error);
+                
+                // Fallback to localStorage
+                const newEntry = { 
+                    player_name: name.trim(), 
+                    score: score, 
+                    created_at: new Date().toISOString()
+                };
+                
                 leaderboard.push(newEntry);
                 leaderboard.sort((a, b) => b.score - a.score);
                 leaderboard = leaderboard.slice(0, 20);
                 
-                // Save to multiple storage locations for better sharing
-                localStorage.setItem('ctj-global-leaderboard-shared', JSON.stringify(leaderboard));
-                
-                // Try to share via URL hash for same-session sharing
-                const hashData = btoa(JSON.stringify(leaderboard.slice(0, 5)));
-                if (hashData.length < 1000) { // Keep URL reasonable
-                    window.location.hash = 'scores=' + hashData;
-                }
-                
-                console.log('Score saved:', newEntry);
-                
-            } catch (error) {
-                console.error('Error saving score:', error);
+                localStorage.setItem('ctj-leaderboard-backup', JSON.stringify(leaderboard));
             }
             
             isSavingScore = false;
             render();
-        }
-
-        // Check URL for shared scores
-        function checkSharedScores() {
-            try {
-                if (window.location.hash.includes('scores=')) {
-                    const hashData = window.location.hash.split('scores=')[1];
-                    const sharedScores = JSON.parse(atob(hashData));
-                    
-                    if (Array.isArray(sharedScores) && sharedScores.length > 0) {
-                        // Merge with local scores
-                        const combined = [...leaderboard, ...sharedScores];
-                        leaderboard = combined
-                            .filter(entry => entry.name && typeof entry.score === 'number')
-                            .sort((a, b) => b.score - a.score)
-                            .slice(0, 20);
-                        
-                        // Save merged data
-                        localStorage.setItem('ctj-global-leaderboard-shared', JSON.stringify(leaderboard));
-                        console.log('Loaded shared scores from URL:', sharedScores);
-                        render();
-                    }
-                }
-            } catch (error) {
-                console.log('No valid shared scores in URL');
-            }
         }
 
         // Timer functions
@@ -387,20 +356,16 @@
         }
 
         function shareScore() {
-            const currentUrl = window.location.href.split('#')[0]; // Remove existing hash
-            const hashData = btoa(JSON.stringify(leaderboard.slice(0, 5)));
-            const shareUrl = currentUrl + '#scores=' + hashData;
-            
-            const text = `I just scored ${score} points in Clinical Trial Jeopardy! Think you can beat me? 🧬💜`;
-            const fullMessage = `${text} Play here: ${shareUrl}`;
+            const currentUrl = window.location.href.split('#')[0]; // Clean URL
+            const text = `I just scored ${score} points in Clinical Trial Jeopardy! Think you can beat me? 🧬💜 Play here: ${currentUrl}`;
             
             if (navigator.share) {
                 navigator.share({
                     title: 'Clinical Trial Jeopardy',
-                    text: fullMessage
-                }).catch(() => copyToClipboard(fullMessage));
+                    text: text
+                }).catch(() => copyToClipboard(text));
             } else {
-                copyToClipboard(fullMessage);
+                copyToClipboard(text);
             }
         }
 
@@ -465,24 +430,24 @@
                         ${isLoading ? `
                             <div class="bg-gray-900 border border-purple-500 rounded-lg p-6">
                                 <h3 class="text-xl md:text-2xl font-bold mb-4 text-purple-400">
-                                    🏆 Loading Leaderboard...
+                                    🏆 Loading Global Leaderboard...
                                 </h3>
                             </div>
                         ` : leaderboard.length > 0 ? `
                             <div class="bg-gray-900 border border-purple-500 rounded-lg p-6">
                                 <h3 class="text-xl md:text-2xl font-bold mb-4 text-purple-400 flex items-center justify-center gap-2">
-                                    🏆 Leaderboard
+                                    🏆 Global Leaderboard
                                 </h3>
                                 <div class="space-y-2">
                                     ${leaderboard.slice(0, 5).map((entry, index) => `
                                         <div class="flex justify-between items-center text-base md:text-lg">
-                                            <span class="text-white">${index + 1}. ${entry.name}</span>
+                                            <span class="text-white">${index + 1}. ${entry.player_name || entry.name}</span>
                                             <span class="text-purple-400 font-bold">${entry.score}</span>
                                         </div>
                                     `).join('')}
                                 </div>
                                 ${leaderboard.length > 5 ? `
-                                    <p class="text-gray-400 text-sm mt-2">...and ${leaderboard.length - 5} more players</p>
+                                    <p class="text-gray-400 text-sm mt-2">...and ${leaderboard.length - 5} more players globally</p>
                                 ` : ''}
                             </div>
                         ` : `
@@ -490,7 +455,7 @@
                                 <h3 class="text-xl md:text-2xl font-bold mb-4 text-purple-400">
                                     🏆 Be the first to play!
                                 </h3>
-                                <p class="text-gray-300">Complete the game to start the leaderboard.</p>
+                                <p class="text-gray-300">Complete the game to start the global leaderboard.</p>
                             </div>
                         `}
                     </div>
@@ -645,7 +610,9 @@
         }
 
         function renderFinished() {
-            const rank = leaderboard.findIndex(entry => entry.name === playerName && entry.score === score) + 1;
+            const rank = leaderboard.findIndex(entry => 
+                (entry.player_name || entry.name) === playerName && entry.score === score
+            ) + 1;
             
             return `
                 <div class="min-h-screen bg-black text-white p-4 md:p-6 flex flex-col items-center justify-center">
@@ -655,15 +622,15 @@
                         
                         ${isSavingScore ? `
                             <div class="text-lg mb-6 text-yellow-400">
-                                Saving your score...
+                                Saving your score to the global leaderboard...
                             </div>
                         ` : rank > 0 && rank <= 5 ? `
                             <div class="text-xl md:text-2xl mb-6 text-purple-400">
-                                🎉 You're #${rank} on the leaderboard! 🎉
+                                🎉 You're #${rank} on the global leaderboard! 🎉
                             </div>
                         ` : rank > 0 ? `
                             <div class="text-lg md:text-xl mb-6 text-gray-300">
-                                You ranked #${rank}! Keep playing to improve your score.
+                                You ranked #${rank} globally! Keep playing to improve your score.
                             </div>
                         ` : ''}
                         
@@ -672,7 +639,7 @@
                                 onclick="shareScore()"
                                 class="bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg text-white font-bold inline-flex items-center justify-center gap-2"
                             >
-                                📤 Share Score & Leaderboard
+                                📤 Share Score
                             </button>
                             <button
                                 onclick="resetGame()"
@@ -684,14 +651,14 @@
 
                         <div class="bg-gray-900 border border-purple-500 rounded-lg p-4 md:p-6">
                             <h3 class="text-xl md:text-2xl font-bold mb-4 text-purple-400 flex items-center justify-center gap-2">
-                                🏆 Leaderboard
+                                🏆 Global Leaderboard
                             </h3>
                             <div class="space-y-2">
                                 ${leaderboard.slice(0, 10).map((entry, index) => `
                                     <div class="flex justify-between items-center text-base md:text-lg p-2 rounded ${
-                                        entry.name === playerName && entry.score === score ? 'bg-purple-600' : ''
+                                        (entry.player_name || entry.name) === playerName && entry.score === score ? 'bg-purple-600' : ''
                                     }">
-                                        <span class="text-white">${index + 1}. ${entry.name}</span>
+                                        <span class="text-white">${index + 1}. ${entry.player_name || entry.name}</span>
                                         <span class="text-purple-400 font-bold">${entry.score}</span>
                                     </div>
                                 `).join('')}
@@ -723,7 +690,6 @@
 
         // Initialize
         loadLeaderboard();
-        checkSharedScores(); // Check for shared scores in URL
     </script>
 </body>
 </html>
